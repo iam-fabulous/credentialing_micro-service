@@ -1,23 +1,26 @@
-#[allow(unused_use, lint(share_owned))]
+#[allow(unused_use, lint(share_owned), unused_variable)]
 module credentialing::cert {
     use sui::package;
     use sui::display;
     use sui::event;
     use std::string::String;
-    // use credentialing::cert::Credential;
-    // use credentialing::cert::VERSION;
 
 
-    /// Not the right admin for this counter
-    const ENotAdmin: u64 = 0;
-    /// Calling functions from the wrong package version
-    const EWrongVersion: u64 = 2;
+    // --- ERRORS ---
+    const EWrongVersion: u64 = 1;
+    const EDeprecated: u64 = 999;
 
-    // 1. Track the current version of the module
-    const VERSION: u64 = 1;
 
+
+    // --- CONSTANTS ---
+    const MODULE_VERSION: u64 = 1;
+
+
+
+    // --- STRUCTS ---
     /// The OTW (One-Time Witness) for the publisher object.
     public struct CERT has drop{}
+
 
     public struct Credential has key {
         id: UID,
@@ -26,12 +29,10 @@ module credentialing::cert {
         issue_date: String,
         issuer: String,
         walrus_blob_id: String,
-        version: u64
     }
 
     public struct AdminCap has key, store {
         id: UID,
-        admin: address,
     }
 
     public struct MintEvent has copy, drop {
@@ -40,8 +41,9 @@ module credentialing::cert {
         blob_id: String,
     }
 
-    fun assert_admin(_cap: &AdminCap, ctx: &TxContext) {
-        assert!(_cap.admin == ctx.sender(), ENotAdmin);
+    public struct Version has key {
+        id: UID,
+        version: u64
     }
 
 
@@ -78,13 +80,45 @@ module credentialing::cert {
         transfer::public_share_object(display);
 
         transfer::public_transfer(publisher, ctx.sender());
-        transfer::transfer(AdminCap { id: object::new(ctx), admin: ctx.sender() }, ctx.sender());
+        transfer::transfer(AdminCap { id: object::new(ctx) }, ctx.sender());
     }
 
-    //--- Public Functions ---
 
-    /// Mint a new Soulbound Credential NFT to the recipient address.
-    /// Can only be called by an entity holding the AdminCap.
+    // --- ADMIN FUNCTIONS ---
+
+    // Run once after upgrade to start versioning
+    public fun create_version_object(_cap: &AdminCap, ctx: &mut TxContext) {
+        transfer::share_object(Version {
+            id: object::new(ctx),
+            version: MODULE_VERSION,
+        });
+    }
+
+    public fun update_version(_cap: &AdminCap, version: &mut Version, new_version: u64) {
+        version.version = new_version;
+    }
+
+    // Add the display migration function here too (from previous answer)
+    public fun update_display_urls(_cap: &AdminCap, display: &mut display::Display<Credential>) {
+        display.edit<Credential>(
+            b"link".to_string(),
+            b"https://aggregator.walrus-testnet.walrus.space/v1/blobs/{walrus_blob_id}".to_string(),
+        );
+
+        display.edit<Credential>(
+            b"image_url".to_string(),
+            b"https://aggregator.walrus-testnet.walrus.space/v1/blobs/{walrus_blob_id}".to_string(),
+        );
+
+        display.update_version();
+    }
+
+
+    //--- MINTING ---
+
+    // Mint a new Soulbound Credential NFT to the recipient address.
+    // Can only be called by an entity holding the AdminCap.
+    // DEPRECATED: Use mint_credential_v2 instead.
     public fun mint_credential(
         _cap: &AdminCap,
         recipient: address,
@@ -95,7 +129,24 @@ module credentialing::cert {
         walrus_blob_id: String,
         ctx: &mut TxContext,
     ){
-        assert_admin(_cap, ctx);
+        abort EDeprecated
+    }
+
+
+    // 2. New Function (V2) uses the external Version module
+    public fun mint_credential_v2(
+        _cap: &AdminCap,
+        version: &Version,
+        recipient: address,
+        recipient_name: String,
+        course_name: String,
+        issue_date: String,
+        issuer: String,
+        walrus_blob_id: String,
+        ctx: &mut TxContext,
+    ){
+        assert!(version.version == MODULE_VERSION, EWrongVersion);
+
         let id = object::new(ctx);
         let credential_id = id.to_inner();
 
@@ -106,49 +157,21 @@ module credentialing::cert {
             issue_date,
             issuer,
             walrus_blob_id: copy walrus_blob_id,
-            version: VERSION,
         };
 
-        // Emit event for off-chain indexing
         event::emit(MintEvent {
             credential_id,
             recipient,
             blob_id: walrus_blob_id,
         });
-        // Transfer the credential to the recipient
+
         transfer::transfer(credential, recipient);
     }
+    
+    
 
 
-    public entry fun migrate_credential(
-        _cap: &AdminCap,
-        credential: &mut Credential,
-        display: &mut display::Display<Credential>,
-        ctx: &mut TxContext,
-    ){
-        assert_admin(_cap, ctx);
-        assert!(credential.version < VERSION, EWrongVersion);
-        credential.version = VERSION;
-
-        display.edit<Credential>(
-            b"link".to_string(),
-            b"https://aggregator.walrus-testnet.walrus.space/v1/blobs/{walrus_blob_id}".to_string(),
-        );
-
-        display.edit<Credential>(
-            b"image_url".to_string(),
-            b"https://aggregator.walrus-testnet.walrus.space/v1/blobs/{walrus_blob_id}".to_string(),
-        )
-    }
-
-    // Burn a Credential object(Revoke).
-    // Can only be called by an entity holding the AdminCap.
-    // 
-    // public fun burn_credential(_cap: &AdminCap, credential: Credential) {
-    //     let Credential { id, .. } = credential;
-    //     object::delete(id);
-    // }
-
+    
     // --- Test Functions (Only compiled for tests) ---
 
     #[test_only]

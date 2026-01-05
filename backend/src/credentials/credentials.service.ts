@@ -15,6 +15,7 @@ export class CredentialsService {
     private readonly packageId: string;
     private readonly adminCapId: string;
     private readonly adminPrivateKey: string;
+    private readonly versionObjectId: string;
 
     constructor(private configService: ConfigService) {
         const url = this.configService.get<string>('PUBLISHER_URL');
@@ -37,6 +38,8 @@ export class CredentialsService {
 
         this.adminPrivateKey = this.configService.get<string>('ADMIN_PRIVATE_KEY') || '';
         if (!this.adminPrivateKey) throw new InternalServerErrorException('ADMIN_PRIVATE_KEY not configured');
+
+        this.versionObjectId = this.configService.get<string>('VERSION_OBJECT_ID') || '';
     }
 
     private readonly logger = new Logger(CredentialsService.name);
@@ -44,7 +47,7 @@ export class CredentialsService {
     async processIssuance(file: Express.Multer.File, issueCredentialDto: IssueCredentialDto) {
         this.logger.log(`Processing credential issuance for ${issueCredentialDto.recipientEmail}...`);
 
-        const blobId = await this.uploadToWalrus(file.buffer);
+        const blobId = await this.uploadToWalrus(file.buffer, file.mimetype);
 
         if(!blobId) {
             throw new InternalServerErrorException('Failed to upload file to Walrus.');
@@ -59,17 +62,17 @@ export class CredentialsService {
             data: {
                 blobId,
                 txDigest,
-                walrusUrl: `https://aggregator.walrus-testnet.walrus.space/v1/${blobId}`,
+                walrusUrl: `https://aggregator.walrus-testnet.walrus.space/v1/blobs/${blobId}`,
                 explorerUrl: `https://suiscan.xyz/${this.suiNetwork}/tx/${txDigest}`
             }
         }
     }
 
-    private async uploadToWalrus(fileBuffer: Buffer): Promise<string> {
+    private async uploadToWalrus(fileBuffer: Buffer, mimeType: string): Promise<string> {
         try {
             const url = `${this.publisherUrl}/v1/blobs?epochs=5`;
             const response = await axios.put(url, fileBuffer, {
-                headers: { 'Content-Type': 'application' },
+                headers: { 'Content-Type': mimeType },
                 maxBodyLength: Infinity,
                 maxContentLength: Infinity,
             });
@@ -111,14 +114,15 @@ export class CredentialsService {
             const tx = new Transaction();
             // Add transaction details here using blobId and issueCredentialDto
             tx.moveCall({
-                target: `${this.packageId}::cert::mint_credential`,
+                target: `${this.packageId}::cert::mint_credential_v2`,
                 arguments: [
                     tx.object(this.adminCapId),
+                    tx.object(this.versionObjectId),
                     tx.pure.address(adminAddress),
                     tx.pure.string(issueCredentialDto.recipientName),
                     tx.pure.string(issueCredentialDto.courseName),
                     tx.pure.string(issueCredentialDto.issueDate),
-                    tx.pure.string("Fabulous Academy Inc."),
+                    tx.pure.string("EnumVerse Academy Inc."),
                     tx.pure.string(blobId),
                 ],
                 typeArguments: [],

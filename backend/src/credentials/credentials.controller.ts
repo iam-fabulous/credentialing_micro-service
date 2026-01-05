@@ -20,9 +20,16 @@ export class CredentialsController {
         @UploadedFile() file: Express.Multer.File,
         @Body() issueCredentialDto: IssueCredentialDto,
     ) {
+
         if (!file) {
             throw new BadRequestException('File is required');
         }
+
+        const allowedMimeTypes = ['application/pdf', 'image/jpg', 'image/png', 'image/jpeg'];
+        if (!allowedMimeTypes.includes(file.mimetype)) {
+            throw new BadRequestException('Invalid file type. Only PDF, JPG, and PNG are allowed.');
+        }
+        
 
         console.log(`Received file: ${file.originalname}, size: ${file.size} bytes`);
         console.log(`Recipient Email: ${issueCredentialDto.recipientEmail}`);
